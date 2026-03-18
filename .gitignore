@@ -1,7 +1,3 @@
 venv/
-*.pyc
-data/
-logs/
-__pycache__/
-*.parquet
-*.crc
+stream_data/
+data/serving/stream/*.parquet
