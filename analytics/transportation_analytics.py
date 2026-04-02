@@ -1,55 +1,111 @@
 import pandas as pd
+import os
 
-def calculate_metrics(df):
-    """
-    Fungsi untuk menghitung statistik utama dari data transportasi.
-    Dataframe (df) berasal dari file parquet yang dibaca di dashboard.
-    """
+# ==========================================
+# LOAD DATA
+# ==========================================
+def load_data(path):
+    if not os.path.exists(path):
+        return pd.DataFrame()
     
-    # Jika data masih kosong, kembalikan nilai default agar dashboard tidak error
-    if df is None or df.empty:
+    # Mencari file parquet di dalam folder data lake
+    files = [f for f in os.listdir(path) if f.endswith(".parquet")]
+    if not files:
+        return pd.DataFrame()
+    
+    # Menggabungkan semua part-file parquet menjadi satu dataframe
+    df = pd.concat(
+        [pd.read_parquet(os.path.join(path, f)) for f in files],
+        ignore_index=True
+    )
+    return df
+
+# ==========================================
+# PREPROCESS
+# ==========================================
+def preprocess(df):
+    if df.empty:
+        return df
+    
+    # Mengubah string timestamp menjadi objek datetime
+    df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
+    
+    # Menghapus data yang timestamp-nya tidak valid (NaT)
+    df = df.dropna(subset=["timestamp"])
+    return df
+
+# ==========================================
+# METRICS
+# ==========================================
+def compute_metrics(df):
+    if df.empty:
         return {
             "total_trips": 0,
-            "avg_fare": 0.0,
-            "avg_distance": 0.0,
-            "total_revenue": 0,
-            "top_location": "N/A"
+            "total_fare": 0,
+            "top_location": "-"
         }
     
-    # 1. Menghitung Total Perjalanan
-    total_trips = len(df)
-    
-    # 2. Menghitung Rata-rata Tarif (Fare)
-    avg_fare = df['fare'].mean()
-    
-    # 3. Menghitung Rata-rata Jarak (Distance)
-    avg_distance = df['distance'].mean()
-    
-    # 4. Menghitung Total Pendapatan (Revenue)
-    total_revenue = df['fare'].sum()
-    
-    # 5. Mencari Lokasi Paling Populer (Modus)
-    if 'location' in df.columns and not df['location'].empty:
-        top_location = df['location'].mode()[0]
-    else:
-        top_location = "N/A"
-
-    # Mengembalikan hasil dalam bentuk Dictionary
     return {
-        "total_trips": total_trips,
-        "avg_fare": avg_fare,
-        "avg_distance": avg_distance,
-        "total_revenue": total_revenue,
-        "top_location": top_location
+        "total_trips": len(df),
+        "total_fare": df["fare"].sum(),
+        "top_location": df.groupby("location")["fare"].sum().idxmax()
     }
 
-def get_daily_trend(df):
-    """
-    (Opsional) Fungsi tambahan untuk melihat tren per jam jika dibutuhkan dashboard
-    """
-    if df.empty or 'timestamp' not in df.columns:
+# ==========================================
+# ANALYSIS FUNCTIONS
+# ==========================================
+def detect_peak_hour(df):
+    if df.empty:
+        return None
+    
+    df["hour"] = df["timestamp"].dt.hour
+    return df.groupby("hour").size().idxmax()
+
+def detect_anomaly(df):
+    """Contoh: Tarif (fare) di atas 80.000 dianggap anomali"""
+    if df.empty:
         return pd.DataFrame()
-        
-    df['hour'] = pd.to_datetime(df['timestamp']).dt.hour
-    trend = df.groupby('hour').size().reset_index(name='count')
-    return trend
+    
+    return df[df["fare"] > 80000]
+
+# ==========================================
+# VISUALIZATION DATA
+# ==========================================
+def fare_per_location(df):
+    if df.empty:
+        return pd.Series(dtype='float64')
+    
+    return df.groupby("location")["fare"].sum().sort_values(ascending=False)
+
+def vehicle_distribution(df):
+    if df.empty:
+        return pd.Series(dtype='int64')
+    
+    return df.groupby("vehicle_type").size().sort_values(ascending=False)
+
+def mobility_trend(df):
+    if df.empty:
+        return pd.Series(dtype='float64')
+    
+    # Resample per 10 detik untuk melihat pergerakan cepat
+    df_trend = df.set_index("timestamp")
+    return df_trend["fare"].resample("10s").sum()
+
+# ==========================================================
+# NEW (PRAKTIKUM 6) - WINDOW AGGREGATION
+# ==========================================================
+def traffic_per_window(df):
+    """
+    Agregasi jumlah trip per menit (windowing).
+    Digunakan untuk visualisasi skala besar (efficient rendering) agar dashboard ringan.
+    """
+    if df.empty:
+        return None
+    
+    # Pastikan kolom timestamp dalam format datetime
+    df["timestamp"] = pd.to_datetime(df["timestamp"])
+    
+    # Mengubah data mentah menjadi agregasi per menit
+    return df.set_index("timestamp") \
+             .resample("1min") \
+             .size()
